@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pierce Voice Calendar</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="panel">
+        <div>
+          <p class="eyebrow">OpenAI Realtime</p>
+          <div class="brand-title">
+            <img src="/pierce-logo.svg" alt="" class="brand-logo" aria-hidden="true" />
+            <h1>Pierce</h1>
+          </div>
+          <p id="modeDescription" class="lede">Book a 15-minute session with Pierce.</p>
+        </div>
+
+        <div class="mode-switch" role="radiogroup" aria-label="Pierce mode">
+          <button id="bookModeButton" class="active" type="button" role="radio" aria-checked="true">
+            Book Session
+          </button>
+          <button id="checkInModeButton" type="button" role="radio" aria-checked="false">
+            Check In
+          </button>
+        </div>
+
+        <div class="controls">
+          <button id="startButton" type="button">Start</button>
+          <button id="stopButton" type="button" disabled>Stop</button>
+        </div>
+
+        <div class="wave-wrap" aria-hidden="true">
+          <canvas id="waveCanvas" class="wave-canvas"></canvas>
+        </div>
+        <p id="status" class="sr-only" aria-live="polite">Stopped</p>
+        <audio id="remoteAudio" autoplay></audio>
+
+        <ol id="events" class="events" aria-label="Realtime events"></ol>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
