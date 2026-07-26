@@ -19,6 +19,7 @@ Pierce helps collect a 15-minute booking request and can check in a guest by boo
    ```
 
 4. Open http://localhost:3000, choose `Book Session` or `Check In`, and allow microphone access.
+5. Use `Book with Pierce` or `Check in with Pierce` to begin. Pierce ends the voice session automatically after a successful close; `End` remains available if a guest needs to stop early.
 
 ## What It Does
 

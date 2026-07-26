@@ -13,14 +13,14 @@ const SESSION_LENGTH_MINUTES = 15;
 const modes = {
   book: {
     description: "Book a 15-minute session with Pierce.",
-    startLabel: "Start",
+    startLabel: "Book with Pierce",
     readyMessage: "Pierce is ready to capture a 15-minute booking request.",
     instructions:
       "You are Pierce, a friendly voice calendar agent. Speak to guests in plain language only. Do not say technical words like Codex, plugin, API, backend, request ID, tool, or function. Start with: \"Hi, welcome. I can help book your 15-minute session.\" Then immediately get recording consent: \"Quick heads up - this voice session may be recorded and transcribed. Is that okay?\" If they do not consent, politely stop. If they consent, lead one question at a time: ask for their name, then email, then what the session is about, then the date and time, then confirm the time in Pacific. Ask for phone only if the guest wants a phone call. For email, convert spoken words like \"at\" and \"dot\" into a normal address, then spell it back as the address you will use. Important known spelling hints: Kurling Robinson starts with K, not C; fokcus.com is spelled f-o-k-c-u-s, not focus.com. If the guest spells letters, prefer those letters over the likely word. Before saving the request, say: \"Okay - I've got {name}, {email}, {date} at {time} Pacific, 15 minutes, about {topic}. Should I check the calendar and send the invite?\" Only after an explicit yes, call prepare_booking_request. Never say the event is definitely booked and never give a confirmation code. After the request is saved, say: \"Thank you. You'll get a calendar invitation once your session is booked. Have a great session.\" If the saved result says spelling was cleaned up, naturally mention the corrected name or email in the readback next time. If the tool says invalid_email, ask the guest to repeat the email and spell it back again."
   },
   "check-in": {
     description: "Check in for your session with your name.",
-    startLabel: "Start check-in",
+    startLabel: "Check in with Pierce",
     readyMessage: "Pierce is ready to check in a guest by name.",
     instructions:
       "You are Pierce, a friendly voice check-in agent. Speak to guests in plain language only. Do not say technical words like Codex, plugin, API, backend, request ID, tool, or function. Start with: \"Hi, welcome. I can check you in for your session.\" Then immediately get recording consent: \"Quick heads up - this voice session may be recorded and transcribed. Is that okay?\" If they do not consent, politely stop. If they consent, ask only for the name they used to book. Read it back: \"I heard {name}. Is that right?\" Important known spelling hint: Kurling Robinson starts with K, not C. If the guest spells or corrects the name, use the corrected spelling. Do not ask for email. If the guest naturally says the session time, include it, but do not ask for it unless you need to tell apart more than one possible session. Only after an explicit yes, call prepare_check_in_request. After the request is saved, say: \"Thank you. You're checked in. Have a great session.\""
@@ -35,6 +35,8 @@ let waveAnalyser;
 let waveFrameId;
 let waveSource;
 let activeMode = "book";
+let endAfterNextResponse = false;
+let autoEndTimer;
 const handledCallIds = new Set();
 
 function setStatus(message) {
@@ -62,6 +64,20 @@ function setMode(mode) {
 function setModeDisabled(disabled) {
   bookModeButton.disabled = disabled;
   checkInModeButton.disabled = disabled;
+}
+
+function clearAutoEnd() {
+  if (autoEndTimer !== undefined) {
+    clearTimeout(autoEndTimer);
+    autoEndTimer = undefined;
+  }
+}
+
+function scheduleAutoEnd(delayMs = 1500) {
+  clearAutoEnd();
+  autoEndTimer = window.setTimeout(() => {
+    if (peerConnection) stop();
+  }, delayMs);
 }
 
 function sizeWaveCanvas() {
@@ -324,6 +340,7 @@ async function handleFunctionCall(item) {
   if (item.name === "prepare_booking_request") {
     const result = await postJson("/booking/request", args);
     result.message = result.message || formatRequestMessage(result);
+    if (result.ok) endAfterNextResponse = true;
     log(result.message);
     sendToolResult(item.call_id, result);
   }
@@ -331,6 +348,7 @@ async function handleFunctionCall(item) {
   if (item.name === "prepare_check_in_request") {
     const result = await postJson("/check-in/request", args);
     result.message = result.message || formatCheckInMessage(result);
+    if (result.ok) endAfterNextResponse = true;
     log(result.message);
     sendToolResult(item.call_id, result);
   }
@@ -347,7 +365,19 @@ function handleServerEvent(event) {
 
   if (event.type === "response.done") {
     const output = event.response?.output || [];
-    output.filter((item) => item.type === "function_call").forEach(handleFunctionCall);
+    const functionCalls = output.filter((item) => item.type === "function_call");
+    functionCalls.forEach(handleFunctionCall);
+    if (endAfterNextResponse && functionCalls.length === 0) {
+      scheduleAutoEnd(4500);
+    }
+  }
+
+  if (
+    endAfterNextResponse &&
+    (event.type === "response.audio.done" || event.type === "output_audio_buffer.stopped")
+  ) {
+    endAfterNextResponse = false;
+    scheduleAutoEnd();
   }
 
   if (event.type === "error") {
@@ -358,6 +388,8 @@ function handleServerEvent(event) {
 async function start() {
   startButton.disabled = true;
   setModeDisabled(true);
+  clearAutoEnd();
+  endAfterNextResponse = false;
   setStatus("Connecting to Pierce...");
   eventsEl.replaceChildren();
 
@@ -414,6 +446,8 @@ async function start() {
 }
 
 function stop() {
+  clearAutoEnd();
+  endAfterNextResponse = false;
   dataChannel?.close();
   peerConnection?.close();
   localStream?.getTracks().forEach((track) => track.stop());
