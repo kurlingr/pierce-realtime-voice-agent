@@ -90,6 +90,26 @@ function normalizeGuestName(name) {
   return knownCorrections[value.toLowerCase()] || value;
 }
 
+function nameKey(name) {
+  return normalizeGuestName(name)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+async function readBookingRequests() {
+  try {
+    const text = await readFile(bookingRequestsPath, "utf8");
+    return text
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+  } catch {
+    return [];
+  }
+}
+
 function isEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
@@ -234,6 +254,8 @@ async function handleCheckInRequest(req, res) {
   const normalizedName = normalizeGuestName(body.guest_name);
   const date = String(body.date || todayInPacific()).trim();
   const sessionTime = normalizeTime(body.session_time);
+  const bookingRequestId = String(body.booking_request_id || "").trim();
+  const topic = String(body.topic || "").trim();
 
   if (!normalizedName || body.recording_consent !== true) {
     sendJson(req, res, 400, { ok: false, reason: "missing_required_fields" });
@@ -261,6 +283,8 @@ async function handleCheckInRequest(req, res) {
     },
     date,
     session_time: sessionTime || "",
+    booking_request_id: bookingRequestId,
+    topic,
     timezone: ownerTimezone,
     recording_consent: true,
     admin_calendar_note: `Admin note: Guest checked in at ${checkedInAt}.`
@@ -281,15 +305,63 @@ async function handleCheckInRequest(req, res) {
     guest_name: request.guest.name,
     date,
     session_time: request.session_time,
+    booking_request_id: request.booking_request_id,
+    topic: request.topic,
     timezone: request.timezone,
     admin_calendar_note: request.admin_calendar_note,
     capture_corrections: request.capture_corrections
   });
 }
 
+async function handleCheckInLookup(req, res) {
+  const body = await readJson(req);
+  const normalizedName = normalizeGuestName(body.guest_name);
+  const targetDate = String(body.date || todayInPacific()).trim();
+  const guestKey = nameKey(normalizedName);
+
+  if (!guestKey) {
+    sendJson(req, res, 400, { ok: false, reason: "missing_guest_name" });
+    return;
+  }
+
+  const rows = await readBookingRequests();
+  const matches = rows
+    .filter((row) => row.check_in !== true && row.guest?.name)
+    .filter((row) => {
+      const candidateKey = nameKey(row.guest.name);
+      return candidateKey === guestKey || candidateKey.includes(guestKey) || guestKey.includes(candidateKey);
+    })
+    .sort((a, b) => {
+      const aToday = a.date === targetDate ? 0 : 1;
+      const bToday = b.date === targetDate ? 0 : 1;
+      if (aToday !== bToday) return aToday - bToday;
+      return `${b.date}T${b.time}`.localeCompare(`${a.date}T${a.time}`);
+    })
+    .slice(0, 4)
+    .map((row) => ({
+      booking_request_id: row.request_id,
+      guest_name: row.guest.name,
+      date: row.date,
+      time: row.time,
+      end_time: row.end_time,
+      topic: row.guest.topic,
+      status: row.status,
+      confirmation: row.confirmation || "",
+      meet_link: row.meet_link || ""
+    }));
+
+  sendJson(req, res, 200, {
+    ok: true,
+    guest_name: normalizedName,
+    date: targetDate,
+    match_count: matches.length,
+    matches
+  });
+}
+
 function instructionsForMode(mode) {
   if (mode === "check-in") {
-    return "You are Pierce, a concise and friendly check-in agent. Speak to guests in plain language only. Do not say technical words like Codex, plugin, API, backend, request ID, tool, or function. Start with: \"Hi, welcome. I can check you in for your session.\" Then immediately get recording consent: \"Quick heads up - this voice session may be recorded and transcribed. Is that okay?\" If they do not consent, politely stop. If they consent, ask only for the name they used to book, then ask them to spell the last name slowly. Read it back: \"I heard {name}, spelled {spelling}. Is that right?\" Important known spelling hints: Kurling Robinson starts with K, not C; Dhital is spelled d-h-i-t-a-l. If the guest corrects the name, use the corrected spelling. Prefer spelled letters over the likely word. Only after an explicit yes, call prepare_check_in_request. If they mention a session time naturally, include it, but do not ask for email. After the request is saved, say: \"Thank you. You're checked in. Have a great session.\"";
+    return "You are Pierce, a concise and friendly check-in agent. Speak to guests in plain language only. Do not say technical words like Codex, plugin, API, backend, request ID, tool, or function. Start with: \"Hi, welcome. I can check you in for your session.\" Then immediately get recording consent: \"Quick heads up - this voice session may be recorded and transcribed. Is that okay?\" If they do not consent, politely stop. If they consent, ask only for the name they used to book, then ask them to spell the last name slowly. Read it back: \"I heard {name}, spelled {spelling}. Is that right?\" Important known spelling hints: Kurling Robinson starts with K, not C; Dhital is spelled d-h-i-t-a-l. If the guest corrects the name, use the corrected spelling. Prefer spelled letters over the likely word. After the guest confirms the name, call find_guest_session. If one session is found, say: \"I found your session on {date} at {time} Pacific about {topic}. Is that the right session?\" If more than one session is found, briefly list the times and topics and ask which one is theirs. If no session is found, say you could not find a matching session and ask if it may be under another name. Only after the guest confirms the session, call prepare_check_in_request with the session date, time, topic, and booking request id. Do not ask for email. After the request is saved, say: \"Thank you. You're checked in. Have a great session.\"";
   }
 
   return "You are Pierce, a concise and friendly voice calendar agent. Speak to guests in plain language only. Do not say technical words like Codex, plugin, API, backend, request ID, tool, or function. Start with: \"Hi, welcome. I can help book your 15-minute session.\" Then immediately get recording consent: \"Quick heads up - this voice session may be recorded and transcribed. Is that okay?\" If they do not consent, politely stop. If they consent, lead one question at a time: ask for their first and last name, then ask them to spell the last name slowly, then ask for email, then what the session is about, then the date and time, then confirm the time in Pacific. Ask for phone only if the guest wants a phone call. Spell the email back. Important known spelling hints: Kurling Robinson starts with K, not C; Dhital is spelled d-h-i-t-a-l; fokcus.com is spelled f-o-k-c-u-s, not focus.com. If the guest spells letters, prefer those letters over the likely word. Before saving the request, read back: \"Okay - I've got {name}, {email}, {date} at {time} Pacific, 15 minutes, about {topic}. Should I check the calendar and send the invite?\" Call prepare_booking_request only after an explicit yes. Never say the event is definitely booked and never give a confirmation code. After the request is saved, say: \"Thank you. You'll get a calendar invitation once your session is booked. Have a great session.\"";
@@ -378,6 +450,11 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/check-in/request") {
       await handleCheckInRequest(req, res);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/check-in/lookup") {
+      await handleCheckInLookup(req, res);
       return;
     }
 

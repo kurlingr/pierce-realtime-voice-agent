@@ -23,7 +23,7 @@ const modes = {
     startLabel: "Check in with Pierce",
     readyMessage: "Pierce is ready to check in a guest by name.",
     instructions:
-      "You are Pierce, a friendly voice check-in agent. Speak to guests in plain language only. Do not say technical words like Codex, plugin, API, backend, request ID, tool, or function. Start with: \"Hi, welcome. I can check you in for your session.\" Then immediately get recording consent: \"Quick heads up - this voice session may be recorded and transcribed. Is that okay?\" If they do not consent, politely stop. If they consent, ask only for the name they used to book, then ask them to spell the last name slowly. Read it back: \"I heard {name}, spelled {spelling}. Is that right?\" Important known spelling hints: Kurling Robinson starts with K, not C; Dhital is spelled d-h-i-t-a-l. If the guest spells or corrects the name, use the corrected spelling. Prefer spelled letters over the likely word. Do not ask for email. If the guest naturally says the session time, include it, but do not ask for it unless you need to tell apart more than one possible session. Only after an explicit yes, call prepare_check_in_request. After the request is saved, say: \"Thank you. You're checked in. Have a great session.\""
+      "You are Pierce, a friendly voice check-in agent. Speak to guests in plain language only. Do not say technical words like Codex, plugin, API, backend, request ID, tool, or function. Start with: \"Hi, welcome. I can check you in for your session.\" Then immediately get recording consent: \"Quick heads up - this voice session may be recorded and transcribed. Is that okay?\" If they do not consent, politely stop. If they consent, ask only for the name they used to book, then ask them to spell the last name slowly. Read it back: \"I heard {name}, spelled {spelling}. Is that right?\" Important known spelling hints: Kurling Robinson starts with K, not C; Dhital is spelled d-h-i-t-a-l. If the guest spells or corrects the name, use the corrected spelling. Prefer spelled letters over the likely word. After the guest confirms the name, call find_guest_session. If one session is found, say: \"I found your session on {date} at {time} Pacific about {topic}. Is that the right session?\" If more than one session is found, briefly list the times and topics and ask which one is theirs. If no session is found, say you could not find a matching session and ask if it may be under another name. Only after the guest confirms the session, call prepare_check_in_request with the session date, time, topic, and booking request id. Do not ask for email. After the request is saved, say: \"Thank you. You're checked in. Have a great session.\""
   }
 };
 
@@ -199,6 +199,16 @@ function formatCheckInMessage(result) {
   return "Check-in was not saved. Tell the guest it did not go through.";
 }
 
+function formatLookupMessage(result) {
+  if (!result.ok) return "I could not look up that session.";
+  if (result.match_count === 0) return `No saved sessions found for ${result.guest_name}.`;
+  if (result.match_count === 1) {
+    const session = result.matches[0];
+    return `Found ${session.guest_name} on ${session.date} at ${session.time} Pacific about ${session.topic}.`;
+  }
+  return `Found ${result.match_count} possible sessions for ${result.guest_name}.`;
+}
+
 function sendEvent(event) {
   if (dataChannel?.readyState === "open") {
     dataChannel.send(JSON.stringify(event));
@@ -267,6 +277,27 @@ function checkInToolSchema() {
   return [
     {
       type: "function",
+      name: "find_guest_session",
+      description:
+        "Finds saved Pierce booking sessions by confirmed guest name so the guest can verify date, time, and reason before check-in.",
+      parameters: {
+        type: "object",
+        properties: {
+          guest_name: {
+            type: "string",
+            description: "Guest's confirmed booking name."
+          },
+          date: {
+            type: "string",
+            description: "Optional date in YYYY-MM-DD format. Use today's date if the guest means today."
+          }
+        },
+        required: ["guest_name"],
+        additionalProperties: false
+      }
+    },
+    {
+      type: "function",
       name: "prepare_check_in_request",
       description:
         "Saves a guest check-in request by confirmed booking name. This does not create or edit a calendar event.",
@@ -288,6 +319,14 @@ function checkInToolSchema() {
           session_time: {
             type: "string",
             description: "Optional session time if the guest provides it."
+          },
+          topic: {
+            type: "string",
+            description: "Session reason or topic from the matched booking."
+          },
+          booking_request_id: {
+            type: "string",
+            description: "Matched booking request id from find_guest_session."
           }
         },
         required: ["guest_name", "recording_consent"],
@@ -349,6 +388,13 @@ async function handleFunctionCall(item) {
     const result = await postJson("/check-in/request", args);
     result.message = result.message || formatCheckInMessage(result);
     if (result.ok) endAfterNextResponse = true;
+    log(result.message);
+    sendToolResult(item.call_id, result);
+  }
+
+  if (item.name === "find_guest_session") {
+    const result = await postJson("/check-in/lookup", args);
+    result.message = result.message || formatLookupMessage(result);
     log(result.message);
     sendToolResult(item.call_id, result);
   }
