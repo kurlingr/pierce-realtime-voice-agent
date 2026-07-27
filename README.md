@@ -29,14 +29,14 @@ Pierce helps collect a 15-minute booking request and can check in a guest by boo
 - The server forwards that SDP to `https://api.openai.com/v1/realtime/calls` using multipart `FormData` fields named `sdp` and `session`.
 - In booking mode, the browser registers `prepare_booking_request(guest_name, guest_email, topic, timezone_confirm, recording_consent, date, time, phone)` with `session.update`.
 - In check-in mode, the browser registers `prepare_check_in_request(guest_name, recording_consent, date, session_time)` with `session.update`.
-- Pierce collects name, email, topic, timezone confirmation, optional phone, recording consent, then asks for explicit confirmation before saving the request.
+- Pierce collects name, last-name spelling, email, topic, timezone confirmation, optional phone, recording consent, then asks for explicit confirmation before saving the request.
 - Pierce starts with "Hi, welcome," gets recording consent first, leads one question at a time, and closes with: "Thank you. You'll get a calendar invitation once your session is booked. Have a great session."
 - The local app writes pending requests to `work/booking-requests.jsonl`.
 - Check-ins ask only for recording consent and the booking name, then write pending admin updates to `work/check-in-requests.jsonl`.
 - Queue records include `queue_type` and a `check_in` flag: bookings use `check_in: false`; check-ins use `check_in: true`.
 - A check-in record includes an admin calendar note like `Admin note: Guest checked in at Jul 21, 2026, 1:05 PM.`
 - Spoken emails such as `jane at example dot com` are normalized and validated before a request is saved.
-- Known capture corrections handle recurring misses like `Curling Robinson` -> `Kurling Robinson` and `focus.com` -> `fokcus.com`.
+- Known capture corrections handle recurring misses like `Curling Robinson` -> `Kurling Robinson`, `Natasha Duttal` -> `Natasha Dhital`, and `focus.com` -> `fokcus.com`.
 - Codex fulfills pending requests with the connected Google Calendar plugin: check availability first, create booking events with `sendUpdates=all`, and mark matched check-in events with the admin note.
 
 ## Calendar Auth
